@@ -47,7 +47,7 @@ def index():
             if query in b["file"].lower():
                 filtered[c].append(b)
 
-    return render_template("books.html", files=filtered, query=query, is_admin=("admin" in session))
+    return render_template("Books.html", files=filtered, query=query, is_admin=("admin" in session))
 
 
 @app.route("/admin", methods=["GET", "POST"])
