@@ -1,77 +1,79 @@
 import os
 import json
-import requests
-from flask import Flask, render_template, request, redirect, url_for, session, flash, Response, send_from_directory
+from flask import Flask, render_template, request, redirect, flash, send_from_directory, url_for, session
 
 app = Flask(__name__)
-app.secret_key = "your_secret_key_here"
+app.secret_key = "super_secret_key"
 
-# Categories
+BASE_FOLDER = "uploads"
 CATEGORIES = ["jee", "neet"]
 
-# Books database file
-BOOKS_JSON = "books.json"
+# JSON file where we save uploaded books
+BOOK_JSON = "Book.json"
 
-# Local uploads (for covers only)
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-for c in CATEGORIES:
-    os.makedirs(os.path.join(UPLOAD_FOLDER, c), exist_ok=True)
+# Allowed extensions
+ALLOWED_DOC_EXTENSIONS = {"pdf"}
+ALLOWED_IMG_EXTENSIONS = {"png", "jpg", "jpeg"}
 
+def allowed_file(filename, allowed_exts):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in allowed_exts
 
-# ------------------ Utility ------------------
+# Ensure folders exist
+os.makedirs(BASE_FOLDER, exist_ok=True)
+for cat in CATEGORIES:
+    os.makedirs(os.path.join(BASE_FOLDER, cat), exist_ok=True)
+
+# Load books
 def load_books():
-    if not os.path.exists(BOOKS_JSON):
-        return {c: [] for c in CATEGORIES}
-    with open(BOOKS_JSON, "r") as f:
+    if not os.path.exists(BOOK_JSON):
+        return {cat: [] for cat in CATEGORIES}
+    with open(BOOK_JSON, "r") as f:
         return json.load(f)
 
-
+# Save books
 def save_books(data):
-    with open(BOOKS_JSON, "w") as f:
+    with open(BOOK_JSON, "w") as f:
         json.dump(data, f, indent=2)
 
-
-books_data = load_books()
-
-
-# ------------------ Routes ------------------
-
-@app.route("/")
+@app.route("/", methods=["GET"])
 def index():
     query = request.args.get("q", "").lower()
-    filtered = {c: [] for c in CATEGORIES}
+    books = load_books()
 
-    for c, books in books_data.items():
-        for b in books:
-            if query in b["file"].lower():
-                filtered[c].append(b)
+    # Search filter
+    filtered = {}
+    for category, items in books.items():
+        filtered[category] = [
+            item for item in items if query in item["file"].lower()
+        ] if query else items
 
-    return render_template("Books.html", files=filtered, query=query, is_admin=("admin" in session))
+    return render_template("books.html", files=filtered, query=query, is_admin=("admin" in session))
 
-
+# ---------------- ADMIN LOGIN ----------------
 @app.route("/admin", methods=["GET", "POST"])
 def admin():
     if request.method == "POST":
-        password = request.form.get("password")
-        if password == "admin123":  # change password
+        if request.form["username"] == "admin" and request.form["password"] == "admin":
             session["admin"] = True
-            return redirect(url_for("index"))
+            return redirect("/")
         else:
-            flash("Invalid password")
-    return render_template("admin.html")
-
+            flash("Invalid credentials")
+    return '''
+    <form method="post">
+        <input type="text" name="username" placeholder="Username"/>
+        <input type="password" name="password" placeholder="Password"/>
+        <button type="submit">Login</button>
+    </form>
+    '''
 
 @app.route("/logout")
 def logout():
     session.pop("admin", None)
-    return redirect(url_for("index"))
+    return redirect("/")
 
-
-# ------------------ Upload ------------------
-
+# ---------------- UPLOAD ----------------
 @app.route("/upload", methods=["POST"])
-def upload_file():
+def upload():
     if "admin" not in session:
         return "Unauthorized", 403
 
@@ -79,93 +81,46 @@ def upload_file():
     if category not in CATEGORIES:
         return "Invalid category", 400
 
-    file = request.files.get("book")
-    cover = request.files.get("cover")
+    book_file = request.files.get("book")
+    cover_file = request.files.get("cover")
 
-    if not file:
-        return "No file uploaded", 400
+    if not book_file or not allowed_file(book_file.filename, ALLOWED_DOC_EXTENSIONS):
+        return "Invalid book file", 400
 
-    # -------- Upload PDF to GoFile --------
-    try:
-        r = requests.post("https://upload.gofile.io/uploadFile", files={"file": (file.filename, file.stream)})
-        res = r.json()
-        if res.get("status") != "ok":
-            return f"GoFile upload failed: {res}", 500
-        download_page = res["data"]["downloadPage"]
-        direct_link = res["data"]["directLink"] if "directLink" in res["data"] else None
-    except Exception as e:
-        return f"Error uploading to GoFile: {e}", 500
+    book_path = os.path.join(BASE_FOLDER, category, book_file.filename)
+    book_file.save(book_path)
 
-    # -------- Save cover locally --------
-    cover_name = None
-    if cover:
-        cover_name = cover.filename
-        cover_path = os.path.join(UPLOAD_FOLDER, category, cover_name)
-        cover.save(cover_path)
+    cover_filename = None
+    if cover_file and allowed_file(cover_file.filename, ALLOWED_IMG_EXTENSIONS):
+        cover_path = os.path.join(BASE_FOLDER, category, cover_file.filename)
+        cover_file.save(cover_path)
+        cover_filename = cover_file.filename
 
-    # -------- Save record --------
-    books_data[category].append({
-        "file": file.filename,
-        "gofile_page": download_page,
-        "direct_link": direct_link,
-        "image": cover_name
-    })
-    save_books(books_data)
+    data = load_books()
+    data[category].append({"file": book_file.filename, "image": cover_filename})
+    save_books(data)
 
-    flash("✅ Book uploaded successfully")
-    return redirect(url_for("index"))
+    flash("Book uploaded successfully!")
+    return redirect("/")
 
-
-# ------------------ Serve Files ------------------
-
+# ---------------- VIEW (OPEN PDF in browser) ----------------
 @app.route("/view/<category>/<filename>")
 def view_file(category, filename):
-    if category not in CATEGORIES:
-        return "Invalid category", 404
+    return send_from_directory(
+        os.path.join(BASE_FOLDER, category),
+        filename,
+        as_attachment=False   # ✅ Inline open in browser
+    )
 
-    for book in books_data.get(category, []):
-        if book["file"] == filename:
-            try:
-                r = requests.get(book["direct_link"], stream=True)
-                if r.status_code != 200:
-                    return "Error fetching file", 500
-                return Response(
-                    r.iter_content(chunk_size=8192),
-                    content_type="application/pdf",
-                    headers={"Content-Disposition": f"inline; filename={filename}"}
-                )
-            except Exception as e:
-                return f"Error fetching file: {e}", 500
-    return "File not found", 404
-
-
+# ---------------- DOWNLOAD (force download) ----------------
 @app.route("/download/<category>/<filename>")
 def download_file(category, filename):
-    if category not in CATEGORIES:
-        return "Invalid category", 404
+    return send_from_directory(
+        os.path.join(BASE_FOLDER, category),
+        filename,
+        as_attachment=True   # ✅ Force download
+    )
 
-    for book in books_data.get(category, []):
-        if book["file"] == filename:
-            try:
-                r = requests.get(book["direct_link"], stream=True)
-                if r.status_code != 200:
-                    return "Error fetching file", 500
-                return Response(
-                    r.iter_content(chunk_size=8192),
-                    content_type="application/pdf",
-                    headers={"Content-Disposition": f"attachment; filename={filename}"}
-                )
-            except Exception as e:
-                return f"Error fetching file: {e}", 500
-    return "File not found", 404
-
-
-@app.route("/cover/<category>/<filename>")
-def cover_file(category, filename):
-    return send_from_directory(os.path.join(UPLOAD_FOLDER, category), filename)
-
-
-# ------------------ Run ------------------
-
+# ---------------- RUN ----------------
 if __name__ == "__main__":
     app.run(debug=True)

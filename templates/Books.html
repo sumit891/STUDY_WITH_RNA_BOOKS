@@ -64,7 +64,7 @@
       <div class="book">
         {% if book.image %}
           <a href="{{ url_for('view_file', category=category, filename=book.file) }}" target="_blank">
-            <img src="{{ url_for('cover_file', category=category, filename=book.image) }}" alt="cover">
+            <img src="{{ url_for('download_file', category=category, filename=book.image) }}" alt="cover">
           </a>
         {% else %}
           <a href="{{ url_for('view_file', category=category, filename=book.file) }}" target="_blank">
@@ -72,7 +72,7 @@
           </a>
         {% endif %}
         <a href="{{ url_for('view_file', category=category, filename=book.file) }}" target="_blank">👁 View</a>
-        <a href="{{ url_for('download_file', category=category, filename=book.file) }}" download>⬇️ Download</a>
+        <a href="{{ url_for('download_file', category=category, filename=book.file) }}">⬇️ Download</a>
       </div>
       {% endfor %}
     </div>
@@ -87,7 +87,7 @@
 
   <div class="footer">
     © 2025 Study with RNA | All rights reserved.<br>
-    👩‍💻MADE BY SUMIT KUMAWAT ❤❤
+    👩‍💻 MADE BY SUMIT KUMAWAT ❤❤<br>
     📢 Join our Telegram: 
     <a href="https://t.me/TEAM_RNA" target="_blank">@TEAM_RNA</a>
   </div>
