@@ -93,7 +93,6 @@ def upload_file():
                 # कभी-कभी directLink missing होता है
                 direct_link = gofile_data.get("directLink")
                 if not direct_link:
-                    # fallback to downloadPage (user को लगेगा आपकी site से मिल रहा है)
                     direct_link = gofile_data.get("downloadPage")
 
                 file_record = {
@@ -125,12 +124,12 @@ def upload_file():
 
     return redirect('/')
 
-@app.route('/download/<category>/<filename>')
-def download_file(category, filename):
+# 👁 View PDF (inline)
+@app.route('/view/<category>/<filename>')
+def view_file(category, filename):
     if category not in CATEGORIES:
         return "Invalid category", 404
 
-    # Find file in books.json
     for book in books_data.get(category, []):
         if book["file"] == filename:
             try:
@@ -144,9 +143,37 @@ def download_file(category, filename):
 
                 return Response(
                     r.iter_content(chunk_size=8192),
-                    content_type=r.headers.get("Content-Type", "application/pdf"),
+                    content_type="application/pdf",
                     headers={
-                        "Content-Disposition": f"attachment; filename={filename}"
+                        "Content-Disposition": f"inline; filename={filename}"  # ✅ Browser में open
+                    }
+                )
+            except Exception as e:
+                return f"Error fetching file: {e}", 500
+    return "File not found", 404
+
+# ⬇️ Force Download PDF
+@app.route('/download/<category>/<filename>')
+def download_file(category, filename):
+    if category not in CATEGORIES:
+        return "Invalid category", 404
+
+    for book in books_data.get(category, []):
+        if book["file"] == filename:
+            try:
+                direct_link = book.get("direct_link")
+                if not direct_link:
+                    return "File link missing in record", 500
+
+                r = requests.get(direct_link, stream=True)
+                if r.status_code != 200:
+                    return f"Error fetching file from GoFile (status {r.status_code})", 500
+
+                return Response(
+                    r.iter_content(chunk_size=8192),
+                    content_type="application/pdf",
+                    headers={
+                        "Content-Disposition": f"attachment; filename={filename}"  # ✅ Force download
                     }
                 )
             except Exception as e:

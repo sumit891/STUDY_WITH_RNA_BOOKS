@@ -120,15 +120,12 @@
       {% for book in books %}
       <div class="book">
         {% if book.image %}
-          <a href="{{ url_for('download_file', category=category, filename=book.file) }}" target="_blank">
-            <img src="{{ url_for('download_file', category=category, filename=book.image) }}" alt="cover">
-          </a>
+          <img src="{{ url_for('serve_image', category=category, filename=book.image) }}" alt="cover">
         {% else %}
-          <a href="{{ url_for('download_file', category=category, filename=book.file) }}" target="_blank">
-            <div style="height:130px; background:#444; border-radius:6px;">No Image</div>
-          </a>
+          <div style="height:130px; background:#444; border-radius:6px;">No Image</div>
         {% endif %}
-        <a href="{{ url_for('download_file', category=category, filename=book.file) }}" download>⬇️ Download</a>
+        <a href="{{ url_for('view_file', category=category, filename=book.file) }}" target="_blank">👁 View</a>
+        <a href="{{ url_for('download_file', category=category, filename=book.file) }}">⬇️ Download</a>
       </div>
       {% endfor %}
     </div>
