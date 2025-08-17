@@ -81,33 +81,38 @@ def upload_file():
         return redirect('/')
 
     if doc and allowed_file(doc.filename, ALLOWED_DOC_EXTENSIONS):
-        # Upload file to GoFile
-        r = requests.post("https://api.gofile.io/uploadFile", files={"file": doc})
-        res = r.json()
+        try:
+            # ✅ Correct GoFile endpoint
+            r = requests.post("https://upload.gofile.io/uploadfile", files={"file": (doc.filename, doc)})
+            print("GoFile RAW RESPONSE:", r.text)  # Debug log
 
-        if res.get("status") == "ok":
-            gofile_data = res["data"]
-            file_record = {
-                "file": doc.filename,
-                "gofile_link": gofile_data["downloadPage"],
-                "direct_link": gofile_data["directLink"],
-                "image": None
-            }
+            res = r.json()
+            if res.get("status") == "ok":
+                gofile_data = res["data"]
+                file_record = {
+                    "file": doc.filename,
+                    "gofile_link": gofile_data.get("downloadPage"),
+                    "direct_link": gofile_data.get("directLink"),
+                    "image": None
+                }
 
-            # Save cover locally
-            if img and allowed_file(img.filename, ALLOWED_IMG_EXTENSIONS):
-                ext = os.path.splitext(img.filename)[1]
-                imgname = os.path.splitext(doc.filename)[0] + ext
-                img.save(os.path.join(BASE_FOLDER, category, imgname))
-                file_record["image"] = imgname
+                # Save cover locally
+                if img and allowed_file(img.filename, ALLOWED_IMG_EXTENSIONS):
+                    ext = os.path.splitext(img.filename)[1]
+                    imgname = os.path.splitext(doc.filename)[0] + ext
+                    img.save(os.path.join(BASE_FOLDER, category, imgname))
+                    file_record["image"] = imgname
 
-            books_data[category].append(file_record)
-            save_books(books_data)
+                books_data[category].append(file_record)
+                save_books(books_data)
 
-            flash('✅ Book uploaded successfully!')
-        else:
-            flash('❌ Failed to upload to GoFile')
+                flash('✅ Book uploaded successfully!')
+            else:
+                flash('❌ Failed to upload to GoFile')
 
+        except Exception as e:
+            print("Upload error:", str(e))
+            flash("❌ Upload error: " + str(e))
     else:
         flash('❌ Invalid book file')
 
@@ -121,21 +126,26 @@ def download_file(category, filename):
     # Find file in books.json
     for book in books_data.get(category, []):
         if book["file"] == filename:
-            # Stream file from GoFile
-            r = requests.get(book["direct_link"], stream=True)
-            return Response(
-                r.iter_content(chunk_size=8192),
-                content_type=r.headers.get("Content-Type", "application/pdf"),
-                headers={
-                    "Content-Disposition": f"attachment; filename={filename}"
-                }
-            )
+            try:
+                # Stream file from GoFile
+                r = requests.get(book["direct_link"], stream=True)
+                return Response(
+                    r.iter_content(chunk_size=8192),
+                    content_type=r.headers.get("Content-Type", "application/pdf"),
+                    headers={
+                        "Content-Disposition": f"attachment; filename={filename}"
+                    }
+                )
+            except Exception as e:
+                return f"Error fetching file: {e}", 500
     return "File not found", 404
 
 @app.route('/uploads/<category>/<filename>')
 def serve_image(category, filename):
-    # Serve cover image locally
-    return Response(open(os.path.join(BASE_FOLDER, category, filename), "rb"), content_type="image/*")
+    path = os.path.join(BASE_FOLDER, category, filename)
+    if os.path.exists(path):
+        return Response(open(path, "rb"), content_type="image/*")
+    return "Image not found", 404
 
 if __name__ == '__main__':
     app.run(debug=True)
