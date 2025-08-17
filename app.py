@@ -1,6 +1,5 @@
-
-from flask import Flask, render_template, request, redirect, flash, send_from_directory, url_for, session
-import os
+from flask import Flask, render_template, request, redirect, flash, url_for, session, Response
+import os, json, requests
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your_default_secret')
@@ -11,11 +10,26 @@ ALLOWED_DOC_EXTENSIONS = {'pdf', 'epub', 'txt', 'doc', 'docx'}
 ALLOWED_IMG_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'admin123')
 
+BOOKS_FILE = "books.json"
 app.config['MAX_CONTENT_LENGTH'] = 300 * 1024 * 1024
 
-# Ensure category folders exist
+# Ensure uploads folder exists
+os.makedirs(BASE_FOLDER, exist_ok=True)
 for category in CATEGORIES:
     os.makedirs(os.path.join(BASE_FOLDER, category), exist_ok=True)
+
+# Load books.json
+def load_books():
+    if os.path.exists(BOOKS_FILE):
+        with open(BOOKS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {c: [] for c in CATEGORIES}
+
+def save_books(data):
+    with open(BOOKS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+books_data = load_books()
 
 def allowed_file(filename, types):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in types
@@ -25,17 +39,12 @@ def home():
     query = request.args.get('q', '').lower()
     categorized_files = {}
     for category in CATEGORIES:
-        folder_path = os.path.join(BASE_FOLDER, category)
-        all_files = os.listdir(folder_path)
-        books = []
-        for f in all_files:
-            if allowed_file(f, ALLOWED_DOC_EXTENSIONS):
-                if query and query not in f.lower():
-                    continue
-                base = os.path.splitext(f)[0]
-                img = next((img for img in all_files if img.startswith(base) and allowed_file(img, ALLOWED_IMG_EXTENSIONS)), None)
-                books.append({'file': f, 'image': img})
-        categorized_files[category] = books
+        filtered_books = []
+        for book in books_data.get(category, []):
+            if query and query not in book['file'].lower():
+                continue
+            filtered_books.append(book)
+        categorized_files[category] = filtered_books
     return render_template("Book.html", files=categorized_files, is_admin=session.get('admin') == True, query=query)
 
 @app.route('/admin', methods=['GET', 'POST'])
@@ -62,7 +71,7 @@ def upload_file():
     if not session.get('admin'):
         flash('Unauthorized')
         return redirect('/admin')
-    
+
     doc = request.files.get('book')
     img = request.files.get('cover')
     category = request.form.get('category')
@@ -70,28 +79,63 @@ def upload_file():
     if category not in CATEGORIES:
         flash("Invalid category")
         return redirect('/')
-    
+
     if doc and allowed_file(doc.filename, ALLOWED_DOC_EXTENSIONS):
-        docname = doc.filename
-        docpath = os.path.join(BASE_FOLDER, category, docname)
-        doc.save(docpath)
+        # Upload file to GoFile
+        r = requests.post("https://api.gofile.io/uploadFile", files={"file": doc})
+        res = r.json()
 
-        if img and allowed_file(img.filename, ALLOWED_IMG_EXTENSIONS):
-            ext = os.path.splitext(img.filename)[1]
-            imgname = os.path.splitext(docname)[0] + ext
-            img.save(os.path.join(BASE_FOLDER, category, imgname))
+        if res.get("status") == "ok":
+            gofile_data = res["data"]
+            file_record = {
+                "file": doc.filename,
+                "gofile_link": gofile_data["downloadPage"],
+                "direct_link": gofile_data["directLink"],
+                "image": None
+            }
 
-        flash('✅ Book and cover uploaded!')
+            # Save cover locally
+            if img and allowed_file(img.filename, ALLOWED_IMG_EXTENSIONS):
+                ext = os.path.splitext(img.filename)[1]
+                imgname = os.path.splitext(doc.filename)[0] + ext
+                img.save(os.path.join(BASE_FOLDER, category, imgname))
+                file_record["image"] = imgname
+
+            books_data[category].append(file_record)
+            save_books(books_data)
+
+            flash('✅ Book uploaded successfully!')
+        else:
+            flash('❌ Failed to upload to GoFile')
+
     else:
         flash('❌ Invalid book file')
-    
+
     return redirect('/')
 
-@app.route('/uploads/<category>/<filename>')
+@app.route('/download/<category>/<filename>')
 def download_file(category, filename):
     if category not in CATEGORIES:
         return "Invalid category", 404
-    return send_from_directory(os.path.join(BASE_FOLDER, category), filename)
+
+    # Find file in books.json
+    for book in books_data.get(category, []):
+        if book["file"] == filename:
+            # Stream file from GoFile
+            r = requests.get(book["direct_link"], stream=True)
+            return Response(
+                r.iter_content(chunk_size=8192),
+                content_type=r.headers.get("Content-Type", "application/pdf"),
+                headers={
+                    "Content-Disposition": f"attachment; filename={filename}"
+                }
+            )
+    return "File not found", 404
+
+@app.route('/uploads/<category>/<filename>')
+def serve_image(category, filename):
+    # Serve cover image locally
+    return Response(open(os.path.join(BASE_FOLDER, category, filename), "rb"), content_type="image/*")
 
 if __name__ == '__main__':
     app.run(debug=True)
