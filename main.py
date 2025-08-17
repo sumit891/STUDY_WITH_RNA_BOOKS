@@ -89,10 +89,17 @@ def upload_file():
             res = r.json()
             if res.get("status") == "ok":
                 gofile_data = res["data"]
+
+                # कभी-कभी directLink missing होता है
+                direct_link = gofile_data.get("directLink")
+                if not direct_link:
+                    # fallback to downloadPage (user को लगेगा आपकी site से मिल रहा है)
+                    direct_link = gofile_data.get("downloadPage")
+
                 file_record = {
                     "file": doc.filename,
                     "gofile_link": gofile_data.get("downloadPage"),
-                    "direct_link": gofile_data.get("directLink"),
+                    "direct_link": direct_link,
                     "image": None
                 }
 
@@ -127,8 +134,14 @@ def download_file(category, filename):
     for book in books_data.get(category, []):
         if book["file"] == filename:
             try:
-                # Stream file from GoFile
-                r = requests.get(book["direct_link"], stream=True)
+                direct_link = book.get("direct_link")
+                if not direct_link:
+                    return "File link missing in record", 500
+
+                r = requests.get(direct_link, stream=True)
+                if r.status_code != 200:
+                    return f"Error fetching file from GoFile (status {r.status_code})", 500
+
                 return Response(
                     r.iter_content(chunk_size=8192),
                     content_type=r.headers.get("Content-Type", "application/pdf"),
